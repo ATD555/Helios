@@ -4,18 +4,23 @@ import json
 import argparse
 from PIL import Image   
 from pathlib import Path
-from steam.steam import SteamEnvironment, SteamUserManager, SteamAppLibrary, SteamAssetManager
-import epic.epic as epic
-from apollo.apollo import find_apollo_install
-from apollo.apollo import ApolloAppsJSON
-import shutil
 from datetime import datetime
 import requests
 from io import BytesIO
 import urllib.parse
+# Custom modules for library management
+from steam.steam import SteamEnvironment, SteamUserManager, SteamAppLibrary, SteamAssetManager
+import epic.epic as epic
+from apollo.apollo import find_apollo_install
+from apollo.apollo import ApolloAppsJSON
 
 # ----------------------------- Helpers ----------------------------- #
+
 def is_valid_png(path: Path) -> bool:
+    """
+    Validates that a file at a specific path is a valid PNG image.
+    Used to ensure cover art integrity.
+    """
     try:
         with Image.open(path) as im:
             return im.format == "PNG"
@@ -25,6 +30,7 @@ def is_valid_png(path: Path) -> bool:
 
 def parse_uuid_args(arg_list):
     """
+    Parses CLI arguments for UUIDs.
     Accepts: ['uuid1,uuid2'] or ['uuid1, uuid2']
     Returns: ['uuid1', 'uuid2']
     """
@@ -38,33 +44,33 @@ def parse_uuid_args(arg_list):
 
 def resolve_apps_by_input(all_libraries, input_str: str):
     """
-    Resolve UUIDs and fuzzy name matches like add/remove logic,
-    but without Apollo side-effects.
+    Resolve UUIDs and fuzzy name matches.
+    Useful for internal logic that needs to find a game object based on user input string.
     """
     search_terms = [s.strip() for s in input_str.split(",") if s.strip()]
     matches = []
 
     for term in search_terms:
-        # Exact UUID
+        # 1. Try Exact UUID match
         app = all_libraries.get(term)
         if app:
             matches.append(app)
             continue
 
-        # Fuzzy name match
+        # 2. Try Fuzzy name match
         term_l = term.lower()
         matches.extend(
             a for a in all_libraries.values()
             if term_l in a.get("name", "").lower()
         )
 
-    # De-duplicate by UUID
+    # De-duplicate by UUID to prevent listing the same game twice
     return list({a["uuid"]: a for a in matches}.values())
 
 def check_admin_write(file_path: Path) -> bool:
     """
-    Returns True if the file can be written to (or created).
-    Otherwise, prints an error and returns False.
+    Checks if the script has write permissions for the target file or directory.
+    Crucial because Apollo is often installed in Program Files, which requires Admin rights.
     """
     if file_path.exists():
         if not os.access(file_path, os.W_OK):
@@ -78,8 +84,8 @@ def check_admin_write(file_path: Path) -> bool:
 
 def verify_helios_covers_dir(verbose=False):
     """
-    Ensure Helios covers directory exists.
-    Does NOT regenerate images, only ensures the directory exists.
+    Ensure Helios covers directory exists in LocalAppData.
+    This is where processed PNGs are stored.
     """
     covers_dir = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "covers"
 
@@ -89,22 +95,23 @@ def verify_helios_covers_dir(verbose=False):
             print(f"Created Helios covers directory at {covers_dir}")
 
 def get_steam_library() -> dict:
+    """
+    Fetches installed Steam games and added Non-Steam shortcuts.
+    Normalizes them into a standard dictionary format.
+    """
     env = SteamEnvironment()
     user_mgr = SteamUserManager(env)
     app_lib = SteamAppLibrary(env)
     asset_mgr = SteamAssetManager(env)
 
+    # Get the active Steam user to find specific shortcuts
     users = user_mgr.get_users()
     steam_user = next(iter(users.values()))
 
     installed_steam_apps = app_lib.get_installed_steam_apps()
     nonsteam_apps = app_lib.get_nonsteam_apps(steam_user)
 
-    
-
-
-
-    # Add library_capsule for Steam apps
+    # Add library_capsule (cover art) path for native Steam apps
     for app in installed_steam_apps.values():
         app_id = app.get("appID")
         assets = asset_mgr.get_steam_assets(int(app_id)) if app_id else {}
@@ -113,7 +120,7 @@ def get_steam_library() -> dict:
                 app[asset_name] = str(Path(asset_value))
         app["source"] = "steam"
 
-    # Add library_capsule for non-Steam apps
+    # Add library_capsule for non-Steam shortcuts added to Steam
     for app in nonsteam_apps.values():
         app_id = app.get("appID")
         assets = asset_mgr.get_nonsteam_assets(app_id, steam_user) if app_id else {}
@@ -128,6 +135,9 @@ def get_steam_library() -> dict:
 
 
 def get_installed_epic_games() -> dict:
+    """
+    Fetches installed Epic Games Store apps using the Manifests and Catalog Cache.
+    """
     MANIFESTS = Path(r"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests")
     CATCACHE_BIN = Path(r"C:\ProgramData\Epic\EpicGamesLauncher\Data\Catalog\catcache.bin")
     epic_lib = epic.EpicLibrary(MANIFESTS, CATCACHE_BIN)
@@ -138,6 +148,9 @@ def get_installed_epic_games() -> dict:
     return epic_apps
 
 def get_apollo_apps() -> ApolloAppsJSON:
+    """
+    Locates the Apollo installation and parses its 'apps.json' config file.
+    """
     installs = find_apollo_install()
     root = None
     for install in installs:
@@ -151,48 +164,51 @@ def get_apollo_apps() -> ApolloAppsJSON:
     return apollo
 
 def print_library_info(library_name: str, steam_apps=None, epic_apps=None, apollo=None, show_sample=True):
-    """Print info about a specific library in a fast, clean format."""
+    """
+    Print detailed info about a specific library (Apollo, Steam, Epic) in a fast, clean format.
+    Used for the --status <library> command.
+    """
     
     print_line = lambda: print("=" * 50)
     
     if library_name == "apollo":
-        installs = find_apollo_install()
-        if not installs:
-            print("No Apollo installation found.")
+        if not apollo:
+            print("Apollo not loaded.")
             return
-
+        installs = find_apollo_install()
+        
+        root = apollo.root
         for install in installs:
-            root = install.get("root")
-            name = install.get("name", "Unknown")
-            fork = install.get("display_name", "Unknown Fork")
+            name = install.get("name", "Apollo")
+            fork = install.get('display_name', "Unknown Apollo Fork")
 
-            print_line()
-            print(f"Apollo Installation Info".center(50))
-            print_line()
-            print(f"{'Name:':20} {name}")
-            print(f"{'Fork:':20} {fork}")
-            print(f"{'Root:':20} {root}")
+        print_line()
+        print(f"Apollo Installation Info".center(50))
+        print_line()
+        print(f"{'Name:':20} {name}")
+        print(f"{'Fork:':20} {fork}")
+        print(f"{'Root:':20} {root}")
 
-            apps_json_path = Path(root) / "Config" / "apps.json"
-            print(f"{'Apps JSON:':20} {apps_json_path}")
+        apps_json_path = apollo.apps_json_path
+        print(f"{'Apps JSON:':20} {apps_json_path}")
 
-            if apps_json_path.exists():
-                with open(apps_json_path, "r", encoding="utf-8") as f:
-                    apps_data = json.load(f)
-                total_apps = len(apps_data.get("apps", []))
-                last_modified = datetime.fromtimestamp(apps_json_path.stat().st_mtime)
-                print(f"{'Total Apps:':20} {total_apps}")
-                print(f"{'Last Modified:':20} {last_modified:%Y-%m-%d %H:%M:%S}")
-                if show_sample:
-                    first_apps = apps_data.get("apps", [])[:5]
-                    print()
-                    print("First 5 apps:")
-                    for app in first_apps:
-                        print(f"  - {app.get('name','Unknown')}")
-            else:
-                print("Apps JSON not found.")
-            print_line()
-            print()
+        if apps_json_path.exists():
+            with open(apps_json_path, "r", encoding="utf-8") as f:
+                apps_data = json.load(f)
+            total_apps = len(apps_data.get("apps", []))
+            last_modified = datetime.fromtimestamp(apps_json_path.stat().st_mtime)
+            print(f"{'Total Apps:':20} {total_apps}")
+            print(f"{'Last Modified:':20} {last_modified:%Y-%m-%d %H:%M:%S}")
+            if show_sample:
+                first_apps = apps_data.get("apps", [])[:5]
+                print()
+                print("First 5 apps:")
+                for app in first_apps:
+                    print(f"   - {app.get('name','Unknown')}")
+        else:
+            print("Apps JSON not found.")
+        print_line()
+        print()
 
     elif library_name in ("steam", "nonsteam"):
         if steam_apps is None:
@@ -223,7 +239,7 @@ def print_library_info(library_name: str, steam_apps=None, epic_apps=None, apoll
                 print()
                 print("First 5 apps:")
                 for app in sample_apps:
-                    print(f"  - {app.get('name','Unknown')}")
+                    print(f"   - {app.get('name','Unknown')}")
         elif library_name in "nonsteam":
             print(f"Total Non-Steam apps: {nonsteam_count}")
 
@@ -237,7 +253,7 @@ def print_library_info(library_name: str, steam_apps=None, epic_apps=None, apoll
                 print("First 5 apps:")
                 # Print them
                 for app in sample_apps:
-                    print(f"  - {app.get('name','Unknown')}")
+                    print(f"   - {app.get('name','Unknown')}")
 
         print_line()
         print()
@@ -255,18 +271,26 @@ def print_library_info(library_name: str, steam_apps=None, epic_apps=None, apoll
             print()
             print("First 5 apps:")
             for app in sample_apps:
-                print(f"  - {app.get('name','Unknown')}")
+                print(f"   - {app.get('name','Unknown')}")
         print_line()
         print()
 
 
 def mark_helios_managed_apps(library: dict, apollo: ApolloAppsJSON) -> dict:
+    """
+    Iterates through all discovered apps (Steam/Epic) and checks if they exist inside Apollo.
+    Adds a 'managed_by_helios' boolean flag to the app dictionary.
+    """
     for app_uuid, app_data in library.items():
         app_data["managed_by_helios"] = bool(apollo.get_app_by_uuid(app_uuid))
     return library
 
 
 def update_helios_cache(libraries: dict, selection: str, verbose=False):
+    """
+    Maintains a local JSON cache of discovered apps in LocalAppData/Helios.
+    Speeds up future operations by not needing to re-parse massive library files every time.
+    """
     HELIOS_CACHE_FILE = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "apps.json"
     HELIOS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -288,6 +312,7 @@ def update_helios_cache(libraries: dict, selection: str, verbose=False):
     if selection == "all":
         current_cache.clear()
     else:
+        # Clear only the selected source from cache before rebuilding
         for uuid, app_data in list(current_cache.items()):
             if app_data.get("source") == selection:
                 current_cache.pop(uuid)
@@ -336,6 +361,10 @@ def list_apps(
     show_index: bool = False,
     show_managed: bool = True,
 ):
+    """
+    Renders a formatted ASCII table of applications.
+    Calculates dynamic column widths based on content length.
+    """
     apps = libraries
     if managed_only:
         apps = {k: v for k, v in libraries.items() if v.get("managed_by_helios")}
@@ -417,7 +446,8 @@ def list_apps(
 
 def print_apps_with_status(apps: list[dict], status_map: dict[str, str]):
     """
-    Print a list of apps in a table style with a status column, only if the app has a status.
+    Print a list of apps in a table style with a specific status column.
+    Used for showing results of Add/Remove operations (e.g., "Already added").
     """
     # Filter apps that actually have a status
     apps_with_status = [app for app in apps if status_map.get(app.get("uuid") or app.get("appID"))]
@@ -453,9 +483,8 @@ def verify_managed_covers(
 ):
     """
     Ensure every Helios-managed app has a cover image.
-
-    - Restores missing or invalid covers
-    - Optionally removes orphaned covers (cleanup=True)
+    - Restores missing or invalid covers by checking the source library (Steam/Epic).
+    - Optionally removes orphaned covers (files in folder but not in apps.json) if cleanup=True.
     """
     covers_dir = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "covers"
     covers_dir.mkdir(parents=True, exist_ok=True)
@@ -583,7 +612,7 @@ def save_library_capsule(
     covers_dir.mkdir(parents=True, exist_ok=True)
     dest = covers_dir / f"{uuid}.png"
 
-    # Already exists → verify PNG
+    # Already exists -> verify PNG
     if dest.exists():
         try:
             with Image.open(dest) as im:
@@ -632,6 +661,10 @@ def save_library_capsule(
 
 
 def add_games(apollo, all_libraries, input_str: str, verbose=False):
+    """
+    Interactive logic to add games.
+    Resolves input -> Finds matches -> Filters for already added -> Prompts user -> Adds.
+    """
     search_terms = [s.strip() for s in input_str.split(",") if s.strip()]
     all_matches = []
 
@@ -729,6 +762,10 @@ def add_games(apollo, all_libraries, input_str: str, verbose=False):
         _add_game(apollo, all_libraries, app, verbose=verbose)
 
 def _add_game(apollo, all_libraries, app_data, verbose=False):
+    """
+    Writes the game entry to Apollo's apps.json and saves the cover image.
+    Requires Admin privileges.
+    """
     
     uuid = app_data['uuid']
 
@@ -765,6 +802,10 @@ def _add_game(apollo, all_libraries, app_data, verbose=False):
 
 
 def _remove_game(apollo, all_libraries, game_data, verbose=False):
+    """
+    Removes the game entry from Apollo's apps.json and deletes the cover image.
+    Requires Admin privileges.
+    """
     uuid = game_data["uuid"]
 
     if not apollo.get_app_by_uuid(uuid):
@@ -792,6 +833,9 @@ def _remove_game(apollo, all_libraries, game_data, verbose=False):
 
 
 def print_helios_status(steam_apps: dict, epic_apps: dict, all_libraries: dict):
+    """
+    Prints a high-level summary of managed games vs total discovered games.
+    """
     managed_apps = [v for v in all_libraries.values() if v.get("managed_by_helios")]
 
 
@@ -827,7 +871,7 @@ def print_helios_status(steam_apps: dict, epic_apps: dict, all_libraries: dict):
 
 def sort_apps(apps: dict, sort_key: str) -> list:
     """
-    Return a sorted list of app dicts
+    Return a sorted list of app dicts based on the provided key (name, source, uuid, managed).
     """
     if not sort_key:
         return list(apps.values())
@@ -862,31 +906,38 @@ def get_helios_type(helios, uuid):
 
 # ----------------------------- CLI ----------------------------- #
 def main():
-    parser = argparse.ArgumentParser(description="Helios Manager (defaults to --status)")
-    parser.add_argument("--info", choices=["apollo","steam","nonsteam","epic"], help="Show information about a specific library")
-    parser.add_argument("--list", action="store_true", help="List installed games")
+    parser = argparse.ArgumentParser(prog='helios', description="Helios (defaults to --status)")
+    parser.add_argument("-l", "--list", action="store_true", help="List installed games")
     parser.add_argument("--sort", nargs="?", const="name", help="Sort output by field")
     parser.add_argument("--cache", choices=["steam","epic","nonsteam","all"], help="Update Helios cache")
     parser.add_argument("--managed", action=argparse.BooleanOptionalAction, help="Filter to Helios-managed apps only")
-    parser.add_argument("--remove", nargs="*", type=str, metavar="UUIDS", help="Comma-separated UUIDs to remove")
-    parser.add_argument("--add", nargs="*", type=str, metavar="UUIDS", help="Comma-separated UUIDs to add")
+    parser.add_argument("-r", "--remove", nargs="*", type=str, metavar="UUIDS", help="Comma-separated UUIDs to remove")
+    parser.add_argument("-a", "--add", nargs="*", type=str, metavar="UUIDS", help="Comma-separated UUIDs to add")
     parser.add_argument("--search", nargs="+", metavar="NAME", help="Search for apps by name")
     parser.add_argument("--source", nargs="+", metavar="NAME", help="Filter to specified source(s)")
-    parser.add_argument("--status", action="store_true", help="Show Helios status")
+    parser.add_argument("-s", "--status", metavar="LIBRARY", help="Show status/info of a specific library (Steam, Non-Steam, Epic, Apollo, etc.) including Helios")
     parser.add_argument("--cleanup-covers", action="store_true", help="Remove orphaned Helios covers")
     parser.add_argument("--show-sample", action="store_true", help="Show sample apps")
-    parser.add_argument("--verbose", action="store_true", help="Show detailed output")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show detailed output")
     parser.add_argument("--type", help="Filter apps by Helios type")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would change without making any modifications")
 
     args = parser.parse_args()
 
+    # ---------------- Default behavior ---------------- #
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     # ---------------- Conflict check ---------------- #
     if args.list and (args.add is not None or args.remove is not None):
-        print("Error: --list cannot be used together with --add or --remove.")
+        parser.error("Error: --list cannot be used together with --add or --remove.")
         return
 
+    if args.show_sample and not args.status:
+        parser.error("--show-sample can only be used together with --status <library>")
+
     # ---------------- Load libraries ---------------- #
+    # Initialize connection to Apollo and external game libraries
     apollo = get_apollo_apps()
     steam_apps = get_steam_library()
     epic_apps = get_installed_epic_games()
@@ -897,29 +948,16 @@ def main():
     fork_name = apollo_install[0].get("display_name") if apollo_install else "Apollo"
 
     # ---------------- Verify setup ---------------- #
+    # Ensure caches and cover directories are healthy
     verify_helios_cache(all_libraries)
     verify_helios_covers_dir(verbose=args.verbose)
     verify_managed_covers(all_libraries, apollo, verbose=args.verbose)
     mark_helios_managed_apps(all_libraries, apollo)
     update_helios_cache(all_libraries, selection="all", verbose=False)
 
-    # ---------------- Default behavior ---------------- #
-    action_flags = any([
-        args.list,
-        args.add is not None,
-        args.remove is not None,
-        args.info,
-        args.cache,
-    ])
-
-    if not action_flags:
-        args.status = True
-
-
     # ---------------- Handle --cache ---------------- #
     if args.cache:
         handle_cache_option(all_libraries, args.cache)
-
 
     # ---------------- Handle --add ---------------- #
     if args.add is not None:
@@ -933,6 +971,7 @@ def main():
         status_map = {}
 
         # ---- 1. Parse explicit UUIDs (comma-separated) ----
+        # User provided specific IDs to add immediately
         explicit_uuids = parse_uuid_args(args.add)
 
         for uuid in explicit_uuids:
@@ -947,13 +986,14 @@ def main():
                 else:
                     status_map[uuid] = "UUID not found"
 
-        # Remove explicit UUIDs from interactive pool
+        # Remove explicit UUIDs from interactive pool so they don't show up in selection list
         explicit_uuid_set = {a["uuid"] for a in explicit_apps}
         interactive_pool = [
             a for a in interactive_pool if a["uuid"] not in explicit_uuid_set
         ]
 
         # ---- 2. Apply filters ONLY if present ----
+        # If user passed --search, --type, or --source, filter the interactive pool
         filters_present = any([args.search, args.source, args.type])
         has_explicit_uuids = bool(args.add)
 
@@ -1039,6 +1079,7 @@ def main():
             all_added.append(app)
 
         if all_added:
+            # Refresh managed status after additions
             mark_helios_managed_apps(all_libraries, apollo)
             update_helios_cache(all_libraries, selection="all", verbose=False)
 
@@ -1169,6 +1210,7 @@ def main():
             all_removed.append(app)
 
         if all_removed:
+            # Refresh managed status after removal
             mark_helios_managed_apps(all_libraries, apollo)
             update_helios_cache(all_libraries, selection="all", verbose=False)
 
@@ -1195,13 +1237,9 @@ def main():
         )
 
 
-    # ---------------- Handle --status ---------------- #
-    if args.status:
-        print_helios_status(steam_apps, epic_apps, all_libraries)
-
     # ---------------- Handle --info ---------------- #
-    if args.info:
-        library = args.info.lower()
+    if args.status:
+        library = args.status.lower()
         show_sample = args.show_sample
         if library == "apollo":
             print_library_info(library, apollo=apollo, show_sample=show_sample)
@@ -1209,6 +1247,8 @@ def main():
             print_library_info(library, steam_apps=all_libraries, show_sample=show_sample)
         elif library == "epic":
             print_library_info(library, epic_apps=epic_apps, show_sample=show_sample)
+        elif (library == (None or "") or library == "helios"):
+            print_helios_status(steam_apps, epic_apps, all_libraries)
         else:
             print(f"Unknown library: {library}")
 
