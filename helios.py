@@ -381,7 +381,7 @@ def list_apps(
     if show_managed:
         header_parts.append(f"{'Managed':<{managed_width}}")
 
-    header_parts.append(f"{'Helios ID':<{uuid_width}}")
+    header_parts.append(f"{'Helios ID (UUID)':<{uuid_width}}")
 
 
     header = " | ".join(header_parts)
@@ -433,7 +433,7 @@ def print_apps_with_status(apps: list[dict], status_map: dict[str, str]):
     status_width = max(len("Status"), max(len(status_map.get(a.get("uuid") or a.get("appID"))) for a in apps_with_status))
 
     # Header
-    header = f"{'Name':<{name_width}} | {'Source':<{source_width}} | {'UUID':<{uuid_width}} | {'Status':<{status_width}}"
+    header = f"{'Name':<{name_width}} | {'Source':<{source_width}} | {'Helios ID (UUID)':<{uuid_width}} | {'Status':<{status_width}}"
     print(header)
     print("-" * len(header))
 
