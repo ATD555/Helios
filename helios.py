@@ -1088,7 +1088,7 @@ def main():
 
         # ---- 2. Apply filters ONLY if present ----
         filters_present = any([args.search, args.source, args.type])
-        has_explicit_uuids = bool(args.add)
+        has_explicit_uuids = bool(args.remove)
 
         if filters_present or not has_explicit_uuids:
             # ----- Search filter (comma-separated) -----
