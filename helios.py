@@ -23,6 +23,9 @@ from environment.environment import find_environment_installs, EnvironmentAppsJS
 # =====================================================================
 #                           Helper Functions
 # =====================================================================
+def dry_run_print(dry_run: bool, message: str):
+    if dry_run:
+        print(f"[DRY RUN] {message}")
 
 def is_valid_png(path: Path) -> bool:
     """
@@ -97,16 +100,19 @@ def check_admin_write(file_path: Path) -> bool:
     return True
 
 
-def verify_helios_covers_dir(verbose: bool = False) -> None:
+def verify_helios_covers_dir(verbose: bool = False, dry_run: bool = False) -> None:
     """
     Ensure Helios covers directory exists in LocalAppData.
     This is where processed PNGs are stored.
     """
     covers_dir = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "covers"
     if not covers_dir.exists():
-        covers_dir.mkdir(parents=True, exist_ok=True)
-        if verbose:
-            print(f"Created Helios covers directory at {covers_dir}")
+        if dry_run:
+            dry_run_print(dry_run, f"Would create covers directory {covers_dir}")
+        else:
+            covers_dir.mkdir(parents=True, exist_ok=True)
+            if verbose:
+                print(f"Created Helios covers directory at {covers_dir}")
 
 
 def get_steam_library() -> dict:
@@ -304,23 +310,30 @@ def print_library_info(
         return
 
 
-def mark_helios_managed_apps(library: dict, environment: EnvironmentAppsJSON) -> dict:
+def mark_helios_managed_apps(library: dict, environment: EnvironmentAppsJSON, dry_run: bool = False) -> dict:
     """
     Iterates through all discovered apps (Steam/Epic) and checks if they exist
     inside the active environment (Apollo/Sunshine/etc.).
     Adds a 'managed_by_helios' boolean flag to the app dictionary.
     """
     for app_uuid, app_data in library.items():
-        app_data["managed_by_helios"] = bool(environment.get_app_by_uuid(app_uuid))
+        if dry_run:
+            dry_run_print(dry_run, f"Would update managed state of {app_data['name']} ({app_data['uuid']})")
+        else:
+            app_data["managed_by_helios"] = bool(environment.get_app_by_uuid(app_uuid))
     return library
 
 
-def update_helios_cache(libraries: dict, selection: str, verbose: bool = False) -> None:
+def update_helios_cache(libraries: dict, selection: str, verbose: bool = False, dry_run: bool = False) -> None:
     """
     Maintains a local JSON cache of discovered apps in LocalAppData/Helios.
     Speeds up future operations by not needing to re-parse massive library
     files every time.
     """
+    if dry_run:
+        dry_run_print(dry_run, f"Would update Helios cache for {selection}")
+        return
+
     HELIOS_CACHE_FILE = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "apps.json"
     HELIOS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -368,17 +381,20 @@ def update_helios_cache(libraries: dict, selection: str, verbose: bool = False) 
         print(f"Helios cache updated ({len(apps_to_include)} apps) for {selection} at {HELIOS_CACHE_FILE}")
 
 
-def verify_helios_cache(all_libraries: dict) -> None:
+def verify_helios_cache(all_libraries: dict, dry_run: bool = False) -> None:
     """
     Ensure Helios cache exists. If missing, rebuild it automatically for all libraries.
     """
     HELIOS_CACHE_FILE = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "apps.json"
     if not HELIOS_CACHE_FILE.exists():
-        print("Helios cache missing, rebuilding for all libraries...")
-        update_helios_cache(all_libraries, "all")
+        if dry_run:
+            dry_run_print(dry_run, f"Would rebuild Helios cache file: {HELIOS_CACHE_FILE}")
+        else:
+            print("Helios cache missing, rebuilding for all libraries...")
+            update_helios_cache(all_libraries, "all", dry_run=dry_run)
 
 
-def handle_cache_option(all_libraries: dict, cache_selection: str) -> None:
+def handle_cache_option(all_libraries: dict, cache_selection: str, dry_run: bool = False) -> None:
     """
     Update Helios cache based on user --cache selection
     """
@@ -388,9 +404,12 @@ def handle_cache_option(all_libraries: dict, cache_selection: str) -> None:
     if cache_selection not in ("steam", "epic", "nonsteam", "all"):
         print(f"Invalid cache selection: {cache_selection}")
         return
-
-    print(f"Updating Helios cache for: {cache_selection}...")
-    update_helios_cache(all_libraries, cache_selection)
+    
+    if dry_run:
+            dry_run_print(dry_run, f"Would update Helios cache for: {cache_selection}")
+    else:
+        print(f"Updating Helios cache for: {cache_selection}...")
+        update_helios_cache(all_libraries, cache_selection, dry_run=dry_run)
 
 
 def sort_apps(apps: dict, sort_key: str | None) -> list[dict]:
@@ -580,6 +599,7 @@ def verify_managed_covers(
     *,
     cleanup: bool = False,
     verbose: bool = False,
+    dry_run: bool = False
 ) -> None:
     """
     Ensure every Helios-managed app has a cover image.
@@ -651,22 +671,26 @@ def verify_managed_covers(
                 print(f"[WARN] No valid image to restore for {app.get('name')}")
             continue
 
-        saved = save_library_capsule(
-            uuid,
-            image_source,
-            environment_root=environment.root,
-            verbose=verbose,
-        )
-
-        if saved:
-            restored += 1
-            if environment_app.get("image-path") != saved:
-                environment_app["image-path"] = saved
-                environment.save()
-            if verbose:
-                print(f"[RESTORED] Cover art for {app.get('name')}")
+        if dry_run:
+            dry_run_print(dry_run, f"Would restore cover for {app.get('name')}")
+            saved = True # pretend success
         else:
-            failed += 1
+            saved = save_library_capsule(
+                uuid,
+                image_source,
+                environment_root=environment.root,
+                verbose=verbose,
+            )
+
+            if saved:
+                restored += 1
+                if environment_app.get("image-path") != saved:
+                    environment_app["image-path"] = saved
+                    environment.save()
+                if verbose:
+                    print(f"[RESTORED] Cover art for {app.get('name')}")
+            else:
+                failed += 1
 
     # Cleanup orphaned covers
     if cleanup:
@@ -675,15 +699,18 @@ def verify_managed_covers(
                 continue
             if file.stem not in managed_uuids:
                 try:
-                    file.unlink()
-                    removed += 1
+                    if dry_run:
+                        dry_run_print(dry_run, f"Would delete orphaned cover {file}")
+                    else:
+                        file.unlink()
+                        removed += 1
                 except Exception as e:
                     if verbose:
                         print(f"[CLEANUP ERROR] {file.name}: {e}")
 
     if verbose:
         print(
-            f"Cover verification complete: "
+            f"Cover verification complete:"
             f"{restored} restored, {failed} failed"
             + (f", {removed} orphaned removed" if cleanup else "")
         )
@@ -694,6 +721,7 @@ def save_library_capsule(
     url_or_path: str | None,
     environment_root: Path | None = None,
     verbose: bool = False,
+    dry_run: bool = False,
 ) -> str | None:
     """
     Save library capsule to Helios covers as PNG.
@@ -709,7 +737,10 @@ def save_library_capsule(
         return None
 
     covers_dir = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "covers"
-    covers_dir.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        dry_run_print(dry_run, f"Would create directory: {covers_dir}")
+    else:
+        covers_dir.mkdir(parents=True, exist_ok=True)
     dest = covers_dir / f"{uuid}.png"
 
     # Already exists -> verify PNG
@@ -717,15 +748,23 @@ def save_library_capsule(
         try:
             with Image.open(dest) as im:
                 if im.format != "PNG":
-                    if verbose:
-                        print(f"[INFO] {dest.name} is not PNG, restoring.")
-                    dest.unlink(missing_ok=True)
+
+                    if dry_run:
+                        dry_run_print(dry_run, f"Would delete/restore corrupted cover {dest}")
+                    else:
+                        dest.unlink(missing_ok=True)
+                        if verbose:
+                            print(f"[INFO] {dest.name} is not PNG, restoring.")
+
                 else:
                     return str(dest)
         except Exception:
-            if verbose:
-                print(f"[INFO] {dest.name} corrupted, restoring.")
-            dest.unlink(missing_ok=True)
+            if dry_run:
+                dry_run_print(dry_run, f"Would delete/restore corrupted cover {dest}")
+            else:
+                dest.unlink(missing_ok=True)
+                if verbose:
+                    print(f"[INFO] {dest.name} corrupted, restoring.")
 
     try:
         # -------- HTTP / HTTPS --------
@@ -751,14 +790,20 @@ def save_library_capsule(
         # Convert to PNG if not already
         if im.format != "PNG":
             im = im.convert("RGBA")
-        im.save(dest, format="PNG")
+        if dry_run:
+            dry_run_print(dry_run, f"Would convert image file {img_path} to PNG")
+        else:
+            im.save(dest, format="PNG")
         return str(dest)
 
     except Exception as e:
-        if dest.exists():
-            dest.unlink(missing_ok=True)
-        if verbose:
-            print(f"[COVER ERROR] {uuid}: {e}")
+        if dry_run:
+            dry_run_print(dry_run, f"Would remove corrupted image file {dest}")
+        else:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            if verbose:
+                print(f"[COVER ERROR] {uuid}: {e}")
         return None
 
 
@@ -767,6 +812,7 @@ def add_games(
     all_libraries: dict,
     input_str: str,
     verbose: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """
     Interactive logic to add games.
@@ -866,7 +912,7 @@ def add_games(
 
     # -------- Add --------
     for app in selected_apps:
-        _add_game(environment, all_libraries, app, verbose=verbose)
+        _add_game(environment, all_libraries, app, verbose=verbose, dry_run=dry_run)
 
 
 def _add_game(
@@ -874,17 +920,22 @@ def _add_game(
     all_libraries: dict,
     app_data: dict,
     verbose: bool = False,
+    dry_run: bool = False,
 ) -> bool:
     """
     Writes the game entry to the environment's apps.json and saves the cover image.
     Requires Admin privileges.
     """
-    uuid = app_data["uuid"]
+    uuid = app_data['uuid']
 
     if environment.get_app_by_uuid(uuid):
         if verbose:
             print(f"{app_data['name']} ({uuid}) is already in apps.json, skipping add.")
         return False
+
+    if dry_run:
+        dry_run_print(dry_run, f"Would add {app_data['name']} ({uuid}) to apps.json")
+        return True
 
     if not check_admin_write(environment.apps_json_path):
         return False
@@ -899,14 +950,17 @@ def _add_game(
 
     app_entry = {
         "uuid": uuid,
-        "name": app_data["name"],
+        "name": app_data['name'],
         "cmd": app_data.get("launch") or "",
         "image-path": image_path or "",
     }
 
-    environment.apps.append(app_entry)
-    environment.by_uuid[uuid] = app_entry
-    environment.save()
+    if not dry_run:
+        environment.apps.append(app_entry)
+        environment.by_uuid[uuid] = app_entry
+        environment.save()
+    else:
+        dry_run_print(dry_run, f"Would write updated apps.json")
 
     if verbose:
         installs = find_environment_installs("all")
@@ -920,36 +974,46 @@ def _remove_game(
     all_libraries: dict,
     game_data: dict,
     verbose: bool = False,
+    dry_run: bool = False,
 ) -> bool:
     """
     Removes the game entry from the environment's apps.json and deletes the cover image.
     Requires Admin privileges.
     """
-    uuid = game_data["uuid"]
+    uuid = game_data['uuid']
 
     if not environment.get_app_by_uuid(uuid):
         if verbose:
             print(f"{game_data['name']} ({uuid}) not found in apps.json, skipping removal.")
         return False
 
+    if dry_run:
+        dry_run_print(dry_run, f"Would remove {game_data['name']} ({uuid}) from apps.json")
+        return True
+
     if not check_admin_write(environment.apps_json_path):
         return False
 
     # Remove from environment
-    environment.apps = [app for app in environment.apps if app.get("uuid") != uuid]
-    environment.by_uuid.pop(uuid, None)
-    environment.data["apps"] = environment.apps
-    environment.save()
+    if not dry_run:
+        environment.apps = [app for app in environment.apps if app.get("uuid") != uuid]
+        environment.by_uuid.pop(uuid, None)
+        environment.data['apps'] = environment.apps
+        environment.save()
+    else:
+        dry_run_print(dry_run, f"Would update apps.json to remove {uuid}")
 
     # Remove cover
     cover_path = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "covers" / f"{uuid}.png"
     if cover_path.exists():
-        cover_path.unlink(missing_ok=True)
+        if dry_run:
+            dry_run_print(dry_run, f"Would delete cover {cover_path}")
+        else:
+            cover_path.unlink(missing_ok=True)
 
     if verbose:
         print(f"Removed {game_data['name']} ({uuid}) from apps.json")
     return True
-
 
 def print_helios_status(steam_apps: dict, epic_apps: dict, all_libraries: dict) -> None:
     """
@@ -1092,7 +1156,16 @@ def main() -> None:
         help="Filter apps by Helios type",
     )
 
+    parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="Show what would happen without making any changes",
+    )
+
+
     args = parser.parse_args()
+
+    dry_run = args.dry_run
 
     # ------------------------ Default Behavior ------------------------
     if len(sys.argv) == 1:
@@ -1145,27 +1218,26 @@ def main() -> None:
         libs.update(ensure_epic_loaded())
         return libs
 
-
     # ------------------------ Verify Setup ------------------------
     all_libraries = get_all_libraries()
     all_libraries = mark_helios_managed_apps(all_libraries, environment)
 
-    verify_helios_cache(all_libraries)
-    verify_helios_covers_dir(verbose=args.verbose)
-    verify_managed_covers(all_libraries, environment, verbose=args.verbose)
-    mark_helios_managed_apps(all_libraries, environment)
-    update_helios_cache(all_libraries, selection="all", verbose=False)
+    verify_helios_cache(all_libraries, dry_run=dry_run)
+    verify_helios_covers_dir(verbose=args.verbose, dry_run=dry_run)
+    verify_managed_covers(all_libraries, environment, verbose=args.verbose, dry_run=dry_run)
+    mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
+    update_helios_cache(all_libraries, selection="all", verbose=False, dry_run=dry_run)
 
     # ------------------------ Handle --cache ------------------------
     if args.cache:
-        handle_cache_option(all_libraries, args.cache)
+        handle_cache_option(all_libraries, args.cache, dry_run=dry_run)
 
     # =================================================================
     #                           ADD WORKFLOW
     # =================================================================
     if args.add is not None:
         all_libraries = get_all_libraries()
-        all_libraries = mark_helios_managed_apps(all_libraries, environment)
+        all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
 
         unmanaged_apps = [
             app for app in all_libraries.values()
@@ -1272,14 +1344,14 @@ def main() -> None:
         all_added: list[dict] = []
 
         for app in explicit_apps + selected_apps:
-            _add_game(environment, all_libraries, app, verbose=args.verbose)
+            _add_game(environment, all_libraries, app, verbose=args.verbose, dry_run=dry_run)
             status_map[app["uuid"]] = f"Added to {environment_name} and managed by Helios"
             all_added.append(app)
 
         if all_added:
             all_libraries = get_all_libraries()
-            mark_helios_managed_apps(all_libraries, environment)
-            update_helios_cache(all_libraries, selection="all", verbose=False)
+            mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
+            update_helios_cache(all_libraries, selection="all", verbose=False, dry_run=dry_run)
 
         if status_map:
             print("\nAdd results:")
@@ -1295,7 +1367,7 @@ def main() -> None:
     # =================================================================
     if args.remove is not None:
         all_libraries = get_all_libraries()
-        all_libraries = mark_helios_managed_apps(all_libraries, environment)
+        all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
 
         managed_apps = [
             app for app in all_libraries.values()
@@ -1402,14 +1474,14 @@ def main() -> None:
         all_removed: list[dict] = []
 
         for app in explicit_apps + selected_apps:
-            _remove_game(environment, all_libraries, app, verbose=args.verbose)
+            _remove_game(environment, all_libraries, app, verbose=args.verbose, dry_run=dry_run)
             status_map[app["uuid"]] = f"Removed from {environment_name} by Helios"
             all_removed.append(app)
 
         if all_removed:
             all_libraries = get_all_libraries()
-            mark_helios_managed_apps(all_libraries, environment)
-            update_helios_cache(all_libraries, selection="all", verbose=False)
+            mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
+            update_helios_cache(all_libraries, selection="all", verbose=False, dry_run=dry_run)
 
         if status_map:
             print("\nRemoval results:")
@@ -1430,6 +1502,7 @@ def main() -> None:
             environment,
             cleanup=True,
             verbose=True,
+            dry_run=dry_run,
         )
 
     # =================================================================
@@ -1478,7 +1551,7 @@ def main() -> None:
     # =================================================================
     if args.list and args.add is None and args.remove is None:
         all_libraries = get_all_libraries()
-        all_libraries = mark_helios_managed_apps(all_libraries, environment)
+        all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
 
         apps_to_show = list(all_libraries.values())
 
