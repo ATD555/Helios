@@ -1,1 +1,1 @@
-pip install pillow requests
+pip install pillow requests vdf
