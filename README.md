@@ -1,9 +1,14 @@
-# Helios
+<div align="center">
+<h1 align="center">Helios</h1>
+<h4 align="center">A Game Streaming Library Management Tool</h4>
+</div>
 
-**Helios** is a utility for discovering, managing, and synchronizing game libraries with **Apollo**.
+---
+
+**Helios** is a utility for *discovering, managing, and synchronizing* game libraries (**Steam/Epic Games Launcher**) with the self-hosted game stream application(s) **[Sunshine](https://github.com/LizardByte/Sunshine), [Apollo](https://github.com/ClassicOldSong/Apollo)** and their various forks (example: **[Vibepollo](https://github.com/Nonary/Vibepollo)**) **without** the need to access the game stream application's **web interface**.
 
 It allows you to:
-- Add/remove games from Apollo
+- Add/remove games from Sunshine/Apollo
 - Discover installed games from Steam, Epic, and Non-Steam app entries
 - Automatically add library cover art to Apollo for added application(s)
 
