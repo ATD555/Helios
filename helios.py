@@ -927,14 +927,16 @@ def _add_game(
     Requires Admin privileges.
     """
     uuid = app_data['uuid']
-
+    installs = find_environment_installs("all")
+    environment_name = installs[0].get("display_name") if installs else "Environment"
     if environment.get_app_by_uuid(uuid):
         if verbose:
-            print(f"{app_data['name']} ({uuid}) is already in apps.json, skipping add.")
+
+            print(f"{app_data['name']} ({uuid}) is already in {environment_name}, skipping add.")
         return False
 
     if dry_run:
-        dry_run_print(dry_run, f"Would add {app_data['name']} ({uuid}) to apps.json")
+        dry_run_print(dry_run, f"Would add {app_data['name']} ({uuid}) to {environment_name}")
         return True
 
     if not check_admin_write(environment.apps_json_path):
@@ -963,8 +965,6 @@ def _add_game(
         dry_run_print(dry_run, f"Would write updated apps.json")
 
     if verbose:
-        installs = find_environment_installs("all")
-        environment_name = installs[0].get("display_name") if installs else "Environment"
         print(f"Added {app_data['name']} ({uuid}) to {environment_name} and updated managed flags.")
     return True
 
@@ -981,14 +981,15 @@ def _remove_game(
     Requires Admin privileges.
     """
     uuid = game_data['uuid']
-
+    installs = find_environment_installs("all")
+    environment_name = installs[0].get("display_name") if installs else "Environment"
     if not environment.get_app_by_uuid(uuid):
         if verbose:
-            print(f"{game_data['name']} ({uuid}) not found in apps.json, skipping removal.")
+            print(f"{game_data['name']} ({uuid}) not found in {environment_name}, skipping removal.")
         return False
 
     if dry_run:
-        dry_run_print(dry_run, f"Would remove {game_data['name']} ({uuid}) from apps.json")
+        dry_run_print(dry_run, f"Would remove {game_data['name']} ({uuid}) from {environment_name}")
         return True
 
     if not check_admin_write(environment.apps_json_path):
@@ -1001,7 +1002,7 @@ def _remove_game(
         environment.data['apps'] = environment.apps
         environment.save()
     else:
-        dry_run_print(dry_run, f"Would update apps.json to remove {uuid}")
+        dry_run_print(dry_run, f"Would remove {game_data['name']} ({uuid}) from {environment_name}")
 
     # Remove cover
     cover_path = Path(os.getenv("LOCALAPPDATA")) / "Helios" / "covers" / f"{uuid}.png"
@@ -1012,7 +1013,7 @@ def _remove_game(
             cover_path.unlink(missing_ok=True)
 
     if verbose:
-        print(f"Removed {game_data['name']} ({uuid}) from apps.json")
+        print(f"Removed {game_data['name']} ({uuid}) from {environment_name} and updated managed flags")
     return True
 
 def print_helios_status(steam_apps: dict, epic_apps: dict, all_libraries: dict) -> None:
