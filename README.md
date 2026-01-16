@@ -23,7 +23,7 @@ It allows you to:
   
 ### App Management
 - Allows **quick addition** and **removal** of games in the above libraries
-- **Interactive selection** or direct input of Helios created UUID (Universally Unique Identifier) to **add*8 or **remove** apps to/from **Sunshine/Apollo**
+- **Interactive selection** or direct input of Helios created UUID (Universally Unique Identifier) to **add** or **remove** apps to/from **Sunshine/Apollo**
 - **Filter** available **apps** by **source, type, name, or managed state**
 - **Tracks** which **apps** are **managed by Helios** using a locally created JSON file (`%localappdata%/Helios/apps.json`)
 - **Automatically creates** Sunshine/Apollo compatible **cover art files** using the set artwork in the respective game's library
