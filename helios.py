@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime
 from io import BytesIO
 import urllib.parse
+import asyncio
 
 import requests
 from PIL import Image
@@ -1221,13 +1222,32 @@ def main() -> None:
 
     # ------------------------ Verify Setup ------------------------
     all_libraries = get_all_libraries()
-    all_libraries = mark_helios_managed_apps(all_libraries, environment)
 
-    verify_helios_cache(all_libraries, dry_run=dry_run)
-    verify_helios_covers_dir(verbose=args.verbose, dry_run=dry_run)
-    verify_managed_covers(all_libraries, environment, verbose=args.verbose, dry_run=dry_run)
-    mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
-    update_helios_cache(all_libraries, selection="all", verbose=False, dry_run=dry_run)
+    async def run_all_verifications_async(
+        all_libraries,
+        environment,
+        args,
+        dry_run: bool,
+    ):
+        tasks = [
+            asyncio.to_thread(verify_helios_cache, all_libraries, dry_run),
+            asyncio.to_thread(verify_helios_covers_dir, verbose=args.verbose, dry_run=dry_run),
+            asyncio.to_thread(verify_managed_covers, all_libraries, environment, verbose=args.verbose, dry_run=dry_run),
+            asyncio.to_thread(mark_helios_managed_apps, all_libraries, environment, dry_run=dry_run),
+            asyncio.to_thread(update_helios_cache, all_libraries, "all", False, dry_run),
+        ]
+
+        # Run all concurrently
+        await asyncio.gather(*tasks)
+
+    asyncio.run(
+        run_all_verifications_async(
+            all_libraries,
+            environment,
+            args,
+            dry_run=dry_run,
+        )
+    )
 
     # ------------------------ Handle --cache ------------------------
     if args.cache:
@@ -1237,9 +1257,6 @@ def main() -> None:
     #                           ADD WORKFLOW
     # =================================================================
     if args.add is not None:
-        all_libraries = get_all_libraries()
-        all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
-
         unmanaged_apps = [
             app for app in all_libraries.values()
             if not app.get("managed_by_helios")
@@ -1367,8 +1384,8 @@ def main() -> None:
     #                          REMOVE WORKFLOW
     # =================================================================
     if args.remove is not None:
-        all_libraries = get_all_libraries()
-        all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
+        #all_libraries = get_all_libraries()
+        #all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
 
         managed_apps = [
             app for app in all_libraries.values()
@@ -1497,7 +1514,7 @@ def main() -> None:
     #                       COVER CLEANUP WORKFLOW
     # =================================================================
     if args.cleanup_covers:
-        all_libraries = get_all_libraries()
+        #all_libraries = get_all_libraries()
         verify_managed_covers(
             all_libraries,
             environment,
@@ -1551,8 +1568,8 @@ def main() -> None:
     #                           LIST WORKFLOW
     # =================================================================
     if args.list and args.add is None and args.remove is None:
-        all_libraries = get_all_libraries()
-        all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
+        #all_libraries = get_all_libraries()
+        #all_libraries = mark_helios_managed_apps(all_libraries, environment, dry_run=dry_run)
 
         apps_to_show = list(all_libraries.values())
 
