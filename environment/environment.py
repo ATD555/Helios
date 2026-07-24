@@ -1,3 +1,4 @@
+import os
 import json
 import winreg
 from pathlib import Path
@@ -102,15 +103,36 @@ KNOWN_ENVIRONMENTS: Dict[str, Dict[str, Any]] = {
         ],
         "registry_direct": None,
         "config_files": ["apollo.conf", "sunshine.conf"],
-        "apps_json": lambda root: root / "Config" / "apps.json",
+        "possible_paths": [
+            Path(os.getenv("PROGRAMFILES", r"C:\Program Files")) / "Apollo",
+            Path(os.getenv("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Apollo",
+            Path(os.getenv("PROGRAMDATA", r"C:\ProgramData")) / "Apollo",
+            Path(os.getenv("LOCALAPPDATA", r"C:\Users\Public")) / "Apollo",
+            Path(r"C:\Apollo"),
+        ],
+        "apps_json": lambda root: (
+            root / "config" / "apps.json" if (root / "config").exists() 
+            else root / "Config" / "apps.json" if (root / "Config").exists()
+            else root / "apps.json"
+        ),
     },
 
     "Sunshine": {
         "aliases": ["sunshine"],
-        "registry_uninstall": [],  # Sunshine does NOT register here
+        "registry_uninstall": [],
         "registry_direct": r"SOFTWARE\LizardByte\Sunshine",
         "config_files": ["sunshine.conf", "apollo.conf"],
-        "apps_json": lambda root: root / "Config" / "apps.json",
+        "possible_paths": [
+            Path(os.getenv("PROGRAMFILES", r"C:\Program Files")) / "Sunshine",
+            Path(os.getenv("PROGRAMDATA", r"C:\ProgramData")) / "Sunshine",
+            Path(os.getenv("LOCALAPPDATA", r"C:\Users\Public")) / "Sunshine",
+            Path(r"C:\Sunshine"),
+        ],
+        "apps_json": lambda root: (
+            root / "config" / "apps.json" if (root / "config").exists()
+            else root / "Config" / "apps.json" if (root / "Config").exists()
+            else root / "apps.json"
+        ),
     },
 }
 
@@ -132,20 +154,24 @@ def match_environment_from_displayname(display_name: str) -> Optional[str]:
 
     return None
 
+
 def find_matching_config_file(path: Path, config_files: List[str]) -> Optional[Path]:
     """
     Returns the full path to the first matching config file, or None.
+    Checks root, config/, and Config/ directories.
     """
     for filename in config_files:
-        lower = path / "config" / filename
-        upper = path / "Config" / filename
-
-        if lower.is_file():
-            return lower
-        if upper.is_file():
-            return upper
+        candidates = [
+            path / "config" / filename,
+            path / "Config" / filename,
+            path / filename,
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
 
     return None
+
 
 # =====================================================================
 #                           Dynamic Environment Detection
@@ -164,18 +190,19 @@ def find_environment_installs(environment: str = "all") -> List[Dict[str, Any]]:
             - display_name
             - root
             - apps_json
+            - config_file
     """
     installs: List[Dict[str, Any]] = []
     environment = environment.lower()
 
-    # ------------------------ Loop Through Environments Dynamically ------------------------
     for env_name, meta in KNOWN_ENVIRONMENTS.items():
         if environment not in ("all", env_name.lower()):
             continue
 
         config_files = meta["config_files"]
+        found_root_paths = set()
 
-        # ------------------------ Uninstall Registry Detection ------------------------
+        # ------------------------ 1. Registry Detection ------------------------
         for reg_path in meta["registry_uninstall"]:
             try:
                 root_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path)
@@ -201,7 +228,7 @@ def find_environment_installs(environment: str = "all") -> List[Dict[str, Any]]:
                 if not config_path:
                     continue
 
-
+                found_root_paths.add(path.resolve())
                 installs.append({
                     "name": env_name,
                     "display_name": display_name.strip(),
@@ -210,15 +237,16 @@ def find_environment_installs(environment: str = "all") -> List[Dict[str, Any]]:
                     "config_file": config_path,
                 })
 
-        # ------------------------ Direct Registry Key Detection ------------------------
+        # ------------------------ 2. Direct Registry Key Detection ------------------------
         if meta["registry_direct"]:
             try:
                 key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, meta["registry_direct"])
                 install_path, _ = winreg.QueryValueEx(key, "")
                 install_path = Path(install_path)
-                
+
                 config_path = find_matching_config_file(install_path, config_files)
-                if config_path:
+                if config_path and install_path.resolve() not in found_root_paths:
+                    found_root_paths.add(install_path.resolve())
                     installs.append({
                         "name": env_name,
                         "display_name": env_name,
@@ -229,5 +257,25 @@ def find_environment_installs(environment: str = "all") -> List[Dict[str, Any]]:
 
             except OSError:
                 pass
+
+        # ------------------------ 3. Direct Filesystem Fallback Search ------------------------
+        # If registry search failed to locate an installation, scan typical directory paths
+        for path in meta.get("possible_paths", []):
+            if not path.exists() or path.resolve() in found_root_paths:
+                continue
+
+            config_path = find_matching_config_file(path, config_files)
+            apps_json_path = meta["apps_json"](path)
+
+            # Accept the installation if apps.json exists OR a config file exists in the directory
+            if config_path or apps_json_path.exists():
+                found_root_paths.add(path.resolve())
+                installs.append({
+                    "name": env_name,
+                    "display_name": env_name,
+                    "root": path,
+                    "apps_json": apps_json_path,
+                    "config_file": config_path or (path / "config" / config_files[0]),
+                })
 
     return installs
